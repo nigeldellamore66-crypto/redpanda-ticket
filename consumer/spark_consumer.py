@@ -5,12 +5,12 @@ from pyspark.sql.types import StructType, StringType, IntegerType
 spark = (
     SparkSession.builder
     .appName("ClientTicketsToParquet")
-    .config("spark.sql.shuffle.partitions", "4")
-    .getOrCreate()
+    .config("spark.sql.shuffle.partitions", "4") # Nombre de partitions
+    .getOrCreate() # Récupère ou créé la session
 )
-spark.sparkContext.setLogLevel("WARN")
+spark.sparkContext.setLogLevel("WARN") # Logs minimums
 
-schema = (
+schema = ( # Définition du schéma de données attendu
     StructType()
     .add("ticket_id", StringType())
     .add("client_id", IntegerType())
@@ -21,18 +21,19 @@ schema = (
 )
 
 raw_df = (
-    spark.readStream.format("kafka")
-    .option("kafka.bootstrap.servers", "redpanda:9092")
+    spark.readStream.format("kafka") # Lecture en streaming au format kafka/redpanda
+    .option("kafka.bootstrap.servers", "redpanda:9092") # Adresse du broker
     .option("subscribe", "client-tickets")
-    .option("startingOffsets", "earliest")
+    .option("startingOffsets", "earliest") # Reprends le stream au offset le plus tôt
+    .option("failOnDataLoss", "false") # Saute les offset manquant en cas de redémarrage du container: incohérence offset/checkpoint 
     .load()
 )
 
 tickets_df = raw_df.select(
-    from_json(col("value").cast("string"), schema).alias("data")
+    from_json(col("value").cast("string"), schema).alias("data") # Récupère la valeur du stream en bytes, le cast en json, puis le parse selon le schema défini
 ).select("data.*")
 
-enriched_df = tickets_df.withColumn(
+enriched_df = tickets_df.withColumn( # Ajoute une nouvelle colonne selon le type de demande
     "support_team",
     when(col("type_demande") == "incident", "Team A")
     .when(col("type_demande") == "facturation", "Team B")
@@ -41,13 +42,14 @@ enriched_df = tickets_df.withColumn(
 )
 
 query = (
-    enriched_df.writeStream
+    enriched_df.writeStream # Ecrit le stream au format parquet
     .format("parquet")
     .outputMode("append")
+    .partitionBy("type_demande") # Partition pruning, permet d'optimiser la lecture sur les requêtes impliquant le type de demande
     .option("path", "/data/parquet/client-tickets")
     .option("checkpointLocation", "/data/checkpoints/client-tickets")
-    .trigger(processingTime="10 seconds")
+    .trigger(processingTime="30 seconds") # Traitements des events kafka par microbatch ( temps élevé pour éviter trop de petits fichiers)
     .start()
 )
 
-query.awaitTermination()
+query.awaitTermination() # Bloque le programme et laisse tourner le stream jusqu'a arrêt forcé du programme

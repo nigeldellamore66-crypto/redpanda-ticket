@@ -47,6 +47,15 @@ services:
       --conf spark.jars.ivy=/tmp/ivy
       --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1
       /opt/app/spark_consumer.py"
+  
+  spark-insight:
+    build: ./consumer
+    volumes:
+      - ./output:/data
+    profiles:
+      - batch
+    command: >
+      /opt/spark/bin/spark-submit /opt/app/spark_insight.py
 
 volumes:
   redpanda_data:
